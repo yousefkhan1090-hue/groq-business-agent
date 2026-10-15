@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("⚡ Autonomous AI Business Agent (Enterprise Multi-File Suite)")
-st.markdown("Upload **multiple PDFs, PNGs, or JPGs** at once. Native vision processing guarantees every price, quantity, and line item is read accurately into professional Excel reports.")
+st.markdown("Upload **multiple PDFs, PNGs, or JPGs** at once. Native vision processing guarantees every header field, line item, price, and total is captured precisely into executive Excel reports.")
 
 # Sidebar Configuration with secure cloud secrets support
 st.sidebar.header("Configuration")
@@ -38,16 +38,19 @@ else:
 st.sidebar.markdown("[Get a free Groq API key here](https://console.groq.com/)")
 
 def process_single_file(uploaded_file, api_key):
-    """Processes either PDF text or sends image directly to Groq Vision for perfect table reading."""
+    """Processes either PDF text or sends image directly to Groq Vision for precise document reading."""
     client = Groq(api_key=api_key)
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
     system_prompt = (
-        "You are an expert business analyst and data extraction AI. "
-        "Analyze the document thoroughly. Read every single word, number, line item, unit price, tax value, and total amount. "
-        "Do NOT return null for prices or totals if they are present in the document. "
-        "Return a clean JSON object containing keys like: document_type, date, vendor_name, client_name, total_amount, "
-        "currency, summary, and an array called line_items (each containing item_description, quantity, unit_price, total)."
+        "You are an expert financial auditor and data extraction AI. "
+        "Analyze the document thoroughly. Read every single word, number, date, vendor name, client name, invoice number, "
+        "payment method, subtotal, tax, total amount, and line item. "
+        "Do NOT return null for prices, dates, or totals if they are present in the document. "
+        "Return a clean JSON object containing exact keys: "
+        "document_type, date, invoice_number, vendor_name, vendor_address, vendor_email, "
+        "client_name, client_address, payment_method, currency, subtotal, tax_amount, total_amount, summary, "
+        "and an array called line_items (each containing item_description, quantity, unit_price, total)."
     )
 
     if file_extension == 'pdf':
@@ -78,7 +81,7 @@ def process_single_file(uploaded_file, api_key):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": system_prompt + "\nExtract all table rows, unit prices, and totals accurately from this invoice image."},
+                        {"type": "text", "text": system_prompt + "\nRead every word precisely from this invoice/document image and extract all details."},
                         {"type": "image_url", "image_url": {"url": f"data:image/{file_extension};base64,{base64_image}"}}
                     ]
                 }
@@ -140,7 +143,7 @@ if uploaded_files:
         if not api_key:
             st.error("Please enter a valid Groq API Key.")
         else:
-            with st.spinner("Analyzing documents with Groq Vision & Llama engines..."):
+            with st.spinner("Extracting precise details with Groq Vision & Llama engines..."):
                 results = {}
                 for file in uploaded_files:
                     file.seek(0)
@@ -162,29 +165,48 @@ if uploaded_files:
                 file_data = st.session_state["processed_data"].get(file.name, {})
                 st.json(file_data)
 
-        # Generate Multi-Tab Excel Workbook with professional styling and line-item tables
+        # Generate Multi-Tab Excel Workbook with structured executive format
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             summary_rows = []
             
             for fname, fcontent in st.session_state["processed_data"].items():
                 if "error" not in fcontent:
-                    # 1. Build summary row (excluding list arrays)
+                    # 1. Summary row for master sheet
                     flat_dict = {k: v for k, v in fcontent.items() if not isinstance(v, (list, dict))}
                     flat_dict["file_name"] = fname
                     summary_rows.append(flat_dict)
                     
-                    # 2. Extract line items into a dedicated table dataframe
+                    safe_sheet_name = fname[:31].replace('/', '_').replace('\\', '_')
+                    
+                    # 2. Build structured layout inside the individual sheet using pandas dataframe construction
+                    meta_rows = [
+                        {"Field": "Document File Name", "Value": fname},
+                        {"Field": "Document Type", "Value": fcontent.get("document_type", "N/A")},
+                        {"Field": "Invoice Number", "Value": fcontent.get("invoice_number", "N/A")},
+                        {"Field": "Date", "Value": fcontent.get("date", "N/A")},
+                        {"Field": "Vendor Name", "Value": fcontent.get("vendor_name", "N/A")},
+                        {"Field": "Vendor Address", "Value": fcontent.get("vendor_address", "N/A")},
+                        {"Field": "Client Name", "Value": fcontent.get("client_name", "N/A")},
+                        {"Field": "Payment Method", "Value": fcontent.get("payment_method", "N/A")},
+                        {"Field": "Currency", "Value": fcontent.get("currency", "USD")},
+                        {"Field": "Total Amount", "Value": fcontent.get("total_amount", "N/A")},
+                        {"Field": "Summary / Notes", "Value": fcontent.get("summary", "N/A")},
+                        {"Field": "", "Value": ""}, # Blank spacer row
+                        {"Field": "--- LINE ITEMS BREAKDOWN ---", "Value": ""}
+                    ]
+                    df_meta = pd.DataFrame(meta_rows)
+                    df_meta.to_excel(writer, sheet_name=safe_sheet_name, index=False, header=False)
+                    
+                    # Append line items table underneath metadata
                     line_items = fcontent.get("line_items", [])
                     if line_items and isinstance(line_items, list):
                         df_items = pd.DataFrame(line_items)
                     else:
-                        # Fallback if no line items array exists
-                        df_items = pd.DataFrame([{"info": "No individual line items parsed"}])
+                        df_items = pd.DataFrame([{"item_description": "No line items parsed", "quantity": "", "unit_price": "", "total": ""}])
                     
-                    # Add invoice metadata headers above or inside the tab if needed
-                    safe_sheet_name = fname[:31].replace('/', '_').replace('\\', '_')
-                    df_items.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                    # Write line items starting below metadata
+                    df_items.to_excel(writer, sheet_name=safe_sheet_name, index=False, startrow=len(meta_rows) + 1)
                 else:
                     summary_rows.append({"file_name": fname, "error": fcontent["error"]})
             
@@ -193,13 +215,15 @@ if uploaded_files:
                 df_summary = pd.DataFrame(summary_rows)
                 df_summary.to_excel(writer, sheet_name="Master_Summary", index=False)
 
-        # Post-process openpyxl workbook for professional styling (Bold headings, wrap text, auto-width)
+        # Post-process openpyxl workbook for professional executive styling
         excel_buffer.seek(0)
         from openpyxl import load_workbook
         wb = load_workbook(excel_buffer)
         
         header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        section_font = Font(name="Calibri", size=11, bold=True, color="1F4E78")
         regular_font = Font(name="Calibri", size=11)
         thin_border = Border(
             left=Side(style='thin', color='D9D9D9'),
@@ -211,29 +235,42 @@ if uploaded_files:
 
         for sheet in wb.sheetnames:
             ws = wb[sheet]
-            # Style header row
-            for col_num in range(1, ws.max_column + 1):
-                cell = ws.cell(row=1, column=col_num)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-            
-            # Style data rows, enable text wrapping so long text goes to multiple lines
-            for row in range(2, ws.max_row + 1):
-                for col in range(1, ws.max_column + 1):
-                    cell = ws.cell(row=row, column=col)
-                    cell.font = regular_font
-                    cell.border = thin_border
-                    cell.alignment = alignment_left
-            
-            # Auto-adjust column widths cleanly with spacing
+            if sheet == "Master_Summary":
+                # Style Master Summary Header
+                for col_num in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=1, column=col_num)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+            else:
+                # Style individual file sheet metadata and tables
+                for row in range(1, ws.max_row + 1):
+                    val_a = ws.cell(row=row, column=1).value
+                    if val_a == "--- LINE ITEMS BREAKDOWN ---":
+                        ws.cell(row=row, column=1).fill = section_fill
+                        ws.cell(row=row, column=1).font = section_font
+                    elif row > 1 and ws.cell(row=row-1, column=1).value == "--- LINE ITEMS BREAKDOWN ---":
+                        # This is the header row of the line items table
+                        for col_num in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=row, column=col_num)
+                            cell.fill = header_fill
+                            cell.font = header_font
+                            cell.alignment = Alignment(horizontal='center', vertical='center')
+                    else:
+                        for col_num in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=row, column=col_num)
+                            cell.font = regular_font
+                            cell.border = thin_border
+                            cell.alignment = alignment_left
+
+            # Auto-adjust column widths cleanly with padding and wrap text enabled
             for col in ws.columns:
                 max_len = 0
                 col_letter = get_column_letter(col[0].column)
                 for cell in col:
                     if cell.value:
                         max_len = max(max_len, len(str(cell.value)))
-                ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
+                ws.column_dimensions[col_letter].width = max(max_len + 4, 22)
 
         final_excel_buffer = io.BytesIO()
         wb.save(final_excel_buffer)

@@ -8,6 +8,8 @@ import pandas as pd
 import io
 import base64
 from streamlit_mic_recorder import mic_recorder
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # Point pytesseract to your local Windows installation path (fallback for local scans if needed)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -20,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("⚡ Autonomous AI Business Agent (Enterprise Multi-File Suite)")
-st.markdown("Upload **multiple PDFs, PNGs, or JPGs** at once. Native vision processing guarantees every price, quantity, and line item is read accurately.")
+st.markdown("Upload **multiple PDFs, PNGs, or JPGs** at once. Native vision processing guarantees every price, quantity, and line item is read accurately into professional Excel reports.")
 
 # Sidebar Configuration with secure cloud secrets support
 st.sidebar.header("Configuration")
@@ -160,34 +162,89 @@ if uploaded_files:
                 file_data = st.session_state["processed_data"].get(file.name, {})
                 st.json(file_data)
 
-        # Generate Multi-Tab Excel Workbook
+        # Generate Multi-Tab Excel Workbook with professional styling and line-item tables
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             summary_rows = []
+            
             for fname, fcontent in st.session_state["processed_data"].items():
                 if "error" not in fcontent:
+                    # 1. Build summary row (excluding list arrays)
                     flat_dict = {k: v for k, v in fcontent.items() if not isinstance(v, (list, dict))}
                     flat_dict["file_name"] = fname
                     summary_rows.append(flat_dict)
                     
-                    df_single = pd.json_normalize(fcontent)
+                    # 2. Extract line items into a dedicated table dataframe
+                    line_items = fcontent.get("line_items", [])
+                    if line_items and isinstance(line_items, list):
+                        df_items = pd.DataFrame(line_items)
+                    else:
+                        # Fallback if no line items array exists
+                        df_items = pd.DataFrame([{"info": "No individual line items parsed"}])
+                    
+                    # Add invoice metadata headers above or inside the tab if needed
                     safe_sheet_name = fname[:31].replace('/', '_').replace('\\', '_')
-                    df_single.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                    df_items.to_excel(writer, sheet_name=safe_sheet_name, index=False)
                 else:
                     summary_rows.append({"file_name": fname, "error": fcontent["error"]})
             
+            # Write master Summary tab first
             if summary_rows:
                 df_summary = pd.DataFrame(summary_rows)
                 df_summary.to_excel(writer, sheet_name="Master_Summary", index=False)
-                
+
+        # Post-process openpyxl workbook for professional styling (Bold headings, wrap text, auto-width)
         excel_buffer.seek(0)
+        from openpyxl import load_workbook
+        wb = load_workbook(excel_buffer)
+        
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        regular_font = Font(name="Calibri", size=11)
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'),
+            right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'),
+            bottom=Side(style='thin', color='D9D9D9')
+        )
+        alignment_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+        for sheet in wb.sheetnames:
+            ws = wb[sheet]
+            # Style header row
+            for col_num in range(1, ws.max_column + 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            
+            # Style data rows, enable text wrapping so long text goes to multiple lines
+            for row in range(2, ws.max_row + 1):
+                for col in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=row, column=col)
+                    cell.font = regular_font
+                    cell.border = thin_border
+                    cell.alignment = alignment_left
+            
+            # Auto-adjust column widths cleanly with spacing
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+        final_excel_buffer = io.BytesIO()
+        wb.save(final_excel_buffer)
+        final_excel_buffer.seek(0)
 
         st.markdown("---")
         st.subheader("📥 Export Master Excel Workbook")
         st.download_button(
-            label="📊 Download Multi-Tab Excel Report (.xlsx)",
-            data=excel_buffer,
-            file_name="Autonomous_Business_Agent_Report.xlsx",
+            label="📊 Download Professional Multi-Tab Excel Report (.xlsx)",
+            data=final_excel_buffer,
+            file_name="Autonomous_Business_Agent_Professional_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
